@@ -1,4 +1,4 @@
-import { APP_VERSION } from "/version.js?v=2026.05.27.3";
+import { APP_VERSION } from "/version.js?v=2026.05.27.4";
 
 const PROFILE_LIST_KEY = "crcProfiles";
 const SELECTED_PROFILE_KEY = "crcSelectedProfile";
