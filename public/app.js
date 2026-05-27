@@ -1,10 +1,15 @@
-import { APP_VERSION } from "/version.js?v=2026.05.27.5";
+import { APP_VERSION } from "/version.js?v=2026.05.27.6";
 
 const PROFILE_LIST_KEY = "crcProfiles";
 const SELECTED_PROFILE_KEY = "crcSelectedProfile";
 const DATA_PREFIX = "crcLearnerData:";
 const UPDATE_CHECK_INTERVAL_MS = 60_000;
 const CLIENT_VERSION = new URL(import.meta.url).searchParams.get("v") || APP_VERSION;
+const MAX_STORED_ARTICLES = 80;
+const MAX_ARTICLE_HISTORY = 120;
+const MAX_AVOID_ARTICLES = 40;
+const MAX_GENERATION_ATTEMPTS = 3;
+const ARTICLE_DUPLICATE_THRESHOLD = 0.82;
 
 const DEFAULT_PROFILES = [
   {
@@ -476,7 +481,7 @@ function dataKey(profileId) {
 function loadLearnerData(profile, options = {}) {
   const parsed = safeJson(localStorage.getItem(dataKey(profile.id)));
   if (parsed?.version && parsed?.currentArticleId) {
-    return parsed;
+    return migrateLearnerData(parsed);
   }
   const firstArticle = createLocalArticle("nature", "P4_HCL_BASELINE", "medium");
   const data = {
@@ -486,6 +491,7 @@ function loadLearnerData(profile, options = {}) {
     currentLevel: "P4_HCL_BASELINE",
     currentArticleId: firstArticle.id,
     articles: [firstArticle],
+    articleHistory: [articleHistoryEntry(firstArticle)],
     vocabulary: {},
     snapshots: [],
     sessions: []
@@ -493,6 +499,21 @@ function loadLearnerData(profile, options = {}) {
   if (!options.silent) {
     localStorage.setItem(dataKey(profile.id), JSON.stringify(data));
   }
+  return data;
+}
+
+function migrateLearnerData(data) {
+  data.articles = Array.isArray(data.articles) ? data.articles : [];
+  data.articleHistory = Array.isArray(data.articleHistory) ? data.articleHistory : [];
+  const known = new Set(data.articleHistory.map((entry) => entry.fingerprint || normalizeDuplicateText(entry.title || "")));
+  for (const article of data.articles) {
+    const entry = articleHistoryEntry(article);
+    if (!known.has(entry.fingerprint)) {
+      data.articleHistory.push(entry);
+      known.add(entry.fingerprint);
+    }
+  }
+  data.articleHistory = dedupeArticleHistory(data.articleHistory).slice(0, MAX_ARTICLE_HISTORY);
   return data;
 }
 
@@ -971,26 +992,41 @@ async function generateArticle(options = {}) {
   const length = els.lengthInput.value;
   const levelId = state.data.currentLevel;
   const focusTerms = options.focusTerms ?? targetReviewTerms(18);
-  const avoidArticles = recentArticleBriefs(8);
+  const rejectedArticles = [];
   els.generateBtn.disabled = true;
   els.mistakeBookGenerateBtn.disabled = true;
   els.generateBtn.textContent = "生成中";
   try {
-    const payload = await api("/api/article/generate", {
-      theme,
-      length,
-      levelId,
-      profileRole: state.profile.role,
-      recentTerms: focusTerms.map((item) => item.term),
-      targetTerms: focusTerms,
-      avoidArticles
-    });
-    addGeneratedArticle(normalizeArticle(payload.article, theme, levelId, length));
-    const targetText = focusTerms.length ? `，已带入 ${Math.min(focusTerms.length, 6)} 个错字词` : "";
-    showToast(payload.article?.source === "openai" ? `AI 文章已生成${targetText}。` : `示例文章已生成${targetText}。`);
+    for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt += 1) {
+      const payload = await api("/api/article/generate", {
+        theme,
+        length,
+        levelId,
+        profileRole: state.profile.role,
+        recentTerms: focusTerms.map((item) => item.term),
+        targetTerms: focusTerms,
+        avoidArticles: [...recentArticleBriefs(MAX_AVOID_ARTICLES), ...rejectedArticles],
+        attempt
+      });
+      const article = normalizeArticle(payload.article, theme, levelId, length);
+      const duplicate = duplicateArticleReason(article);
+      if (!duplicate) {
+        addGeneratedArticle(article);
+        const targetText = focusTerms.length ? `，已带入 ${Math.min(focusTerms.length, 6)} 个错字词` : "";
+        showToast(payload.article?.source === "openai" ? `AI 文章已生成${targetText}。` : `示例文章已生成${targetText}。`);
+        return;
+      }
+      rejectedArticles.push({ ...articleHistoryEntry(article), duplicateReason: duplicate });
+    }
+    showToast("AI 连续生成了相似文章，已停止加入重复内容。请换个主题再试。");
   } catch {
-    addGeneratedArticle(createLocalArticle(uniqueLocalTheme(theme), levelId, length));
-    showToast("已使用本地示例生成文章。");
+    const fallback = createUniqueLocalArticle(theme, levelId, length);
+    if (fallback) {
+      addGeneratedArticle(fallback);
+      showToast("已使用不重复的本地示例文章。");
+    } else {
+      showToast("没有找到不重复的文章，已保留当前阅读。");
+    }
   } finally {
     els.generateBtn.disabled = false;
     els.mistakeBookGenerateBtn.disabled = !targetReviewTerms(1).length;
@@ -1000,8 +1036,9 @@ async function generateArticle(options = {}) {
 
 function addGeneratedArticle(article) {
   state.data.articles.unshift(article);
-  state.data.articles = state.data.articles.slice(0, 20);
+  state.data.articles = state.data.articles.slice(0, MAX_STORED_ARTICLES);
   state.data.currentArticleId = article.id;
+  state.data.articleHistory = dedupeArticleHistory([articleHistoryEntry(article), ...(state.data.articleHistory ?? [])]).slice(0, MAX_ARTICLE_HISTORY);
   state.selectedTerm = null;
   saveData();
   renderAll();
@@ -1019,13 +1056,110 @@ function targetReviewTerms(limit = 18) {
     }));
 }
 
-function recentArticleBriefs(limit = 8) {
-  return (state.data?.articles ?? []).slice(0, limit).map((article) => ({
+function recentArticleBriefs(limit = MAX_AVOID_ARTICLES) {
+  return articleHistoryEntries().slice(0, limit).map((entry) => ({
+    title: entry.title,
+    theme: entry.theme,
+    levelId: entry.levelId,
+    excerpt: entry.excerpt,
+    fingerprint: entry.fingerprint
+  }));
+}
+
+function articleHistoryEntries() {
+  const history = Array.isArray(state.data?.articleHistory) ? state.data.articleHistory : [];
+  const fromArticles = (state.data?.articles ?? []).map(articleHistoryEntry);
+  return dedupeArticleHistory([...history, ...fromArticles]);
+}
+
+function articleHistoryEntry(article) {
+  return {
     title: article.title,
     theme: THEME_LABELS[article.theme] ?? article.theme,
     levelId: article.levelId,
-    excerpt: article.paragraphs.join("").slice(0, 140)
-  }));
+    excerpt: article.paragraphs.join("").slice(0, 180),
+    opening: normalizeDuplicateText(article.paragraphs.join("")).slice(0, 120),
+    fingerprint: articleFingerprint(article),
+    createdAt: article.createdAt || new Date().toISOString()
+  };
+}
+
+function dedupeArticleHistory(entries) {
+  const seen = new Set();
+  const unique = [];
+  for (const entry of entries) {
+    const key = entry.fingerprint || normalizeDuplicateText(`${entry.title || ""}${entry.excerpt || ""}`);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(entry);
+  }
+  return unique;
+}
+
+function duplicateArticleReason(article) {
+  const candidate = articleHistoryEntry(article);
+  const candidateTitle = normalizeDuplicateText(candidate.title);
+  for (const entry of articleHistoryEntries()) {
+    if (candidateTitle && candidateTitle === normalizeDuplicateText(entry.title)) {
+      return "same_title";
+    }
+    if (candidate.opening && entry.opening && candidate.opening.slice(0, 80) === entry.opening.slice(0, 80)) {
+      return "same_opening";
+    }
+    if (candidate.fingerprint && entry.fingerprint && textSimilarity(candidate.fingerprint, entry.fingerprint) >= ARTICLE_DUPLICATE_THRESHOLD) {
+      return "too_similar";
+    }
+  }
+  return "";
+}
+
+function articleFingerprint(article) {
+  return normalizeDuplicateText([article.title, ...(article.paragraphs ?? [])].join("")).slice(0, 1200);
+}
+
+function normalizeDuplicateText(value) {
+  return Array.from(String(value ?? "").toLowerCase())
+    .filter((char) => isChineseChar(char) || /[a-z0-9]/.test(char))
+    .join("");
+}
+
+function textSimilarity(left, right) {
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  const shorter = left.length < right.length ? left : right;
+  const longer = left.length < right.length ? right : left;
+  if (shorter.length >= 80 && longer.includes(shorter.slice(0, 80))) {
+    return 1;
+  }
+
+  const leftSet = ngramSet(left, 2);
+  const rightSet = ngramSet(right, 2);
+  if (!leftSet.size || !rightSet.size) return 0;
+  let intersection = 0;
+  for (const item of leftSet) {
+    if (rightSet.has(item)) intersection += 1;
+  }
+  return intersection / (leftSet.size + rightSet.size - intersection);
+}
+
+function ngramSet(value, size) {
+  const text = value.slice(0, 900);
+  const grams = new Set();
+  for (let index = 0; index <= text.length - size; index += 1) {
+    grams.add(text.slice(index, index + size));
+  }
+  return grams;
+}
+
+function createUniqueLocalArticle(preferredTheme, levelId, length) {
+  const themes = [preferredTheme, ...Object.keys(ARTICLE_TEMPLATES).filter((theme) => theme !== preferredTheme)];
+  for (const theme of themes) {
+    const article = createLocalArticle(theme, levelId, length);
+    if (!duplicateArticleReason(article)) {
+      return article;
+    }
+  }
+  return null;
 }
 
 function uniqueLocalTheme(preferredTheme) {

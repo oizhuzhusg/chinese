@@ -168,12 +168,14 @@ async function articleGenerateFromBody(body, env) {
     : recentTerms.map((term) => ({ term, status: "", hitCount: 1, context: "" }));
   const targetTermLabels = targetTerms.map((item) => item.term).filter(Boolean);
   const avoidArticles = Array.isArray(body.avoidArticles)
-    ? body.avoidArticles.slice(0, 8).map((item) => ({
+    ? body.avoidArticles.slice(0, 30).map((item) => ({
         title: cleanText(item?.title, 80),
         theme: cleanText(item?.theme, 40),
-        excerpt: cleanText(item?.excerpt, 160)
+        excerpt: cleanText(item?.excerpt, 180),
+        duplicateReason: cleanText(item?.duplicateReason, 40)
       }))
     : [];
+  const attempt = Math.max(1, Math.min(3, Number(body.attempt) || 1));
 
   if (!hasOpenAIKey(env)) {
     return json({
@@ -188,6 +190,7 @@ async function articleGenerateFromBody(body, env) {
     "你是一位熟悉新加坡小学华文学习环境的中文阅读老师。",
     "请为一名10岁学生生成一篇中文阅读文章，起点约为新加坡小四高级华文。",
     "文章必须适合儿童，语言自然，不要太幼稚；主题贴近生活，并包含少量可挑战的词语。",
+    "这次生成必须是一篇全新的文章。严禁复用以前生成过的标题、开头、人物关系、核心事件或段落结构。",
     "不要使用 markdown。不要在文章中给拼音。",
     "请附上3道单选阅读理解题，每题4个选项，答案必须完全等于其中一个选项。",
     "",
@@ -199,8 +202,10 @@ async function articleGenerateFromBody(body, env) {
       ? `请尽量自然包含这些字词中的大部分，至少包含 ${Math.min(6, targetTermLabels.length)} 个；不要集中堆砌，也不要用拼音代替。`
       : "没有指定错字词时，请保持小四高级华文的适度挑战。",
     `错字词上下文线索：${JSON.stringify(targetTerms.filter((item) => item.context).slice(0, 8))}`,
-    `最近文章，必须避免相似标题、情节、场景和开头：${JSON.stringify(avoidArticles)}`,
-    "如果主题相同，也要换一个新的具体情境、人物目标和问题发展。",
+    `已生成过或刚被拒绝的文章，必须全部避开：${JSON.stringify(avoidArticles)}`,
+    `当前重试次数：${attempt}`,
+    "如果主题相同，也必须换新的具体场景、人物目标、冲突原因、解决方式和第一句话。",
+    "不要只替换人物名字或少量词语；如果和旧文章相似，请换一个新的故事设计。",
     "",
     "返回 JSON，字段为 title, paragraphs, questions。"
   ].join("\n");
