@@ -73,6 +73,29 @@ button:disabled {
   opacity: 0.65;
 }
 
+.update-banner {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(20, 124, 116, 0.24);
+  background: #173e3a;
+  color: #fff;
+  padding: 10px 14px;
+  text-align: center;
+}
+
+.update-banner .primary {
+  min-height: 34px;
+  border-color: #fff;
+  background: #fff;
+  color: #173e3a;
+  padding: 0 12px;
+}
+
 label {
   display: block;
   margin: 14px 0 6px;

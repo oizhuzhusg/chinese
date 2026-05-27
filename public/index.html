@@ -7,6 +7,11 @@
     <link rel="stylesheet" href="/styles.css?v=0.1.0" />
   </head>
   <body>
+    <div id="updateBanner" class="update-banner hidden" role="status" aria-live="polite">
+      <span id="updateMessage">发现新版本。</span>
+      <button id="updateNowBtn" class="primary" type="button">更新</button>
+    </div>
+
     <div id="profileGate" class="profile-gate" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
       <section class="profile-dialog">
         <p class="eyebrow">Account</p>
@@ -45,6 +50,7 @@
             <strong id="profileBadge">未选择</strong>
           </button>
           <span id="roleBadge" class="status-pill">Student</span>
+          <span id="versionBadge" class="status-pill">Version</span>
           <span id="saveBadge" class="status-pill soft">已保存</span>
         </div>
       </header>

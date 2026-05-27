@@ -1,7 +1,10 @@
-const APP_VERSION = "0.1.0";
+import { APP_VERSION } from "/version.js?v=2026.05.27.2";
+
 const PROFILE_LIST_KEY = "crcProfiles";
 const SELECTED_PROFILE_KEY = "crcSelectedProfile";
 const DATA_PREFIX = "crcLearnerData:";
+const UPDATE_CHECK_INTERVAL_MS = 60_000;
+const CLIENT_VERSION = new URL(import.meta.url).searchParams.get("v") || APP_VERSION;
 
 const DEFAULT_PROFILES = [
   {
@@ -296,6 +299,9 @@ const ARTICLE_TEMPLATES = {
 };
 
 const els = {
+  updateBanner: document.querySelector("#updateBanner"),
+  updateMessage: document.querySelector("#updateMessage"),
+  updateNowBtn: document.querySelector("#updateNowBtn"),
   profileGate: document.querySelector("#profileGate"),
   profileList: document.querySelector("#profileList"),
   profileForm: document.querySelector("#profileForm"),
@@ -308,6 +314,7 @@ const els = {
   switchProfileBtn: document.querySelector("#switchProfileBtn"),
   profileBadge: document.querySelector("#profileBadge"),
   roleBadge: document.querySelector("#roleBadge"),
+  versionBadge: document.querySelector("#versionBadge"),
   saveBadge: document.querySelector("#saveBadge"),
   levelCard: document.querySelector("#levelCard"),
   themeInput: document.querySelector("#themeInput"),
@@ -340,6 +347,8 @@ const state = {
   toastTimer: null
 };
 
+let pendingUpdateVersion = null;
+
 init();
 
 function init() {
@@ -347,6 +356,7 @@ function init() {
   const selectedId = localStorage.getItem(SELECTED_PROFILE_KEY);
   const selected = state.profiles.find((profile) => profile.id === selectedId);
   bindEvents();
+  setupUpdateChecks();
   renderProfileGate();
   if (selected) {
     selectProfile(selected.id, { keepGateClosed: true });
@@ -357,6 +367,7 @@ function init() {
 
 function bindEvents() {
   els.profileForm.addEventListener("submit", handleProfileCreate);
+  els.updateNowBtn.addEventListener("click", updateToLatestVersion);
   els.profileList.addEventListener("click", (event) => {
     const button = event.target.closest("[data-profile-id]");
     if (!button) return;
@@ -498,6 +509,84 @@ function pulseSaved() {
   pulseSaved.timer = window.setTimeout(() => {
     els.saveBadge.textContent = "本地记录";
   }, 1300);
+}
+
+function normalizeVersion(version) {
+  return String(version ?? "").trim();
+}
+
+function renderUpdateBanner(version) {
+  pendingUpdateVersion = version;
+  els.updateMessage.textContent = `发现新版本 ${version}。`;
+  els.updateBanner.classList.remove("hidden");
+}
+
+function hideUpdateBanner() {
+  pendingUpdateVersion = null;
+  els.updateBanner.classList.add("hidden");
+  els.updateNowBtn.disabled = false;
+  els.updateNowBtn.textContent = "更新";
+}
+
+function renderAppVersion() {
+  els.versionBadge.textContent = `Version ${CLIENT_VERSION}`;
+  els.versionBadge.title = `当前版本 ${CLIENT_VERSION}`;
+}
+
+async function checkForAppUpdate() {
+  try {
+    const payload = await getJson(`/api/version?client=${encodeURIComponent(CLIENT_VERSION)}&t=${Date.now()}`);
+    const serverVersion = normalizeVersion(payload.version);
+    if (serverVersion && serverVersion !== CLIENT_VERSION) {
+      renderUpdateBanner(serverVersion);
+      return;
+    }
+    hideUpdateBanner();
+  } catch {
+    els.versionBadge.title = `当前版本 ${CLIENT_VERSION}`;
+  }
+}
+
+async function clearBrowserAppCaches() {
+  if ("serviceWorker" in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.unregister()));
+  }
+
+  if ("caches" in window) {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((key) => caches.delete(key)));
+  }
+}
+
+async function updateToLatestVersion() {
+  if (!pendingUpdateVersion) return;
+
+  const version = pendingUpdateVersion;
+  els.updateNowBtn.disabled = true;
+  els.updateNowBtn.textContent = "更新中";
+
+  try {
+    await clearBrowserAppCaches();
+  } catch {
+    // Reloading with a versioned URL still helps when cache APIs are unavailable.
+  } finally {
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.set("v", version);
+    nextUrl.searchParams.set("updatedAt", String(Date.now()));
+    window.location.replace(nextUrl.toString());
+  }
+}
+
+function setupUpdateChecks() {
+  renderAppVersion();
+  checkForAppUpdate();
+  window.setInterval(checkForAppUpdate, UPDATE_CHECK_INTERVAL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      checkForAppUpdate();
+    }
+  });
 }
 
 function renderAll() {
@@ -1297,6 +1386,74 @@ function postJsonWithXhr(path, body) {
   });
 }
 
+function getJsonWithXhr(path) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", path);
+    xhr.timeout = 9000;
+    xhr.onload = () => {
+      const payload = safeJson(xhr.responseText) ?? {};
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload);
+      } else {
+        reject(new Error(payload.error || `Request failed: ${xhr.status}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network request failed."));
+    xhr.ontimeout = () => reject(new Error("Network request timed out."));
+    xhr.send();
+  });
+}
+
+function getJsonWithJsonp(path) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `__crcJsonp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const script = document.createElement("script");
+    const cleanup = () => {
+      delete window[callbackName];
+      script.remove();
+      window.clearTimeout(timer);
+    };
+    const timer = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("Network request timed out."));
+    }, 12000);
+    window[callbackName] = (payload) => {
+      cleanup();
+      if (payload?.error) {
+        reject(new Error(payload.error));
+      } else {
+        resolve(payload);
+      }
+    };
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("Network request failed."));
+    };
+    const url = new URL(path, window.location.origin);
+    url.pathname = "/api/jsonp";
+    url.searchParams.set("action", "version");
+    url.searchParams.set("callback", callbackName);
+    document.head.append(script);
+    script.src = url.toString();
+  });
+}
+
+async function getJson(path) {
+  if (typeof window.fetch !== "function") {
+    if (typeof window.XMLHttpRequest !== "function") {
+      return getJsonWithJsonp(path);
+    }
+    return getJsonWithXhr(path);
+  }
+  const response = await fetch(path, { cache: "no-store" });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `Request failed: ${response.status}`);
+  }
+  return payload;
+}
+
 function postJsonWithJsonp(path, body) {
   return new Promise((resolve, reject) => {
     const action = actionForPath(path);
@@ -1334,6 +1491,7 @@ function postJsonWithJsonp(path, body) {
 }
 
 function actionForPath(path) {
+  if (path.startsWith("/api/version")) return "version";
   if (path === "/api/article/generate") return "article.generate";
   if (path === "/api/vocab/explain") return "vocab.explain";
   if (path === "/api/level/analyze") return "level.analyze";

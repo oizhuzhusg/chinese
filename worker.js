@@ -1,3 +1,5 @@
+import { APP_VERSION } from "./public/version.js";
+
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 
 const LEVELS = [
@@ -112,9 +114,14 @@ export default {
       return json({
         ok: true,
         app: "chinese-reading-coach",
+        version: APP_VERSION,
         env: env.APP_ENV || "local",
         hasOpenAI: hasOpenAIKey(env)
       });
+    }
+
+    if (url.pathname === "/api/version" && request.method === "GET") {
+      return json(versionPayload());
     }
 
     if (url.pathname === "/api/jsonp" && request.method === "GET") {
@@ -311,6 +318,9 @@ async function handleJsonp(url, env) {
   }
 
   try {
+    if (action === "version") {
+      return jsonp(callback, versionPayload());
+    }
     if (action === "article.generate") {
       return responseToJsonp(callback, await articleGenerateFromBody(body, env));
     }
@@ -324,6 +334,13 @@ async function handleJsonp(url, env) {
   } catch (error) {
     return jsonp(callback, { error: error instanceof Error ? error.message : "JSONP request failed." }, 500);
   }
+}
+
+function versionPayload() {
+  return {
+    version: APP_VERSION,
+    checkedAt: new Date().toISOString()
+  };
 }
 
 function analyzeLocally(levelId, stats) {
