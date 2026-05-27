@@ -115,7 +115,7 @@ export default {
         ok: true,
         app: "chinese-reading-coach",
         version: APP_VERSION,
-        env: env.APP_ENV || "local",
+        env: runtimeEnvName(env, url),
         hasOpenAI: hasOpenAIKey(env)
       });
     }
@@ -341,6 +341,14 @@ function versionPayload() {
     version: APP_VERSION,
     checkedAt: new Date().toISOString()
   };
+}
+
+function runtimeEnvName(env, url) {
+  const configured = String(env.APP_ENV || "").trim();
+  if (configured && configured !== "local") return configured;
+  if (url.hostname.includes("chinese-reading-coach-staging")) return "staging";
+  if (url.hostname.includes("chinese-reading-coach.")) return "production";
+  return configured || "local";
 }
 
 function analyzeLocally(levelId, stats) {
