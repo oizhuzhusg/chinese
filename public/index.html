@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>中文阅读教练</title>
+    <link rel="stylesheet" href="/styles.css?v=0.1.0" />
+  </head>
+  <body>
+    <div id="profileGate" class="profile-gate" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
+      <section class="profile-dialog">
+        <p class="eyebrow">Account</p>
+        <h1 id="profileTitle">选择学习账号</h1>
+        <p class="profile-copy">学生账号记录真实进度；测试员账号可以自由试功能，不影响孩子水平判断。</p>
+        <div id="profileList" class="profile-list"></div>
+
+        <form id="profileForm" class="profile-form">
+          <div>
+            <label for="profileNameInput">新账号名称</label>
+            <input id="profileNameInput" type="text" maxlength="24" autocomplete="off" placeholder="例如：Mason" />
+          </div>
+          <div>
+            <label for="profileRoleInput">账号类型</label>
+            <select id="profileRoleInput">
+              <option value="student">学生</option>
+              <option value="tester">测试员</option>
+            </select>
+          </div>
+          <button class="primary" type="submit">新增账号</button>
+        </form>
+      </section>
+    </div>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <p class="eyebrow">Reading Coach</p>
+          <h1>中文阅读教练</h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="readingPageBtn" class="nav-button active" type="button">阅读</button>
+          <button id="mistakeBookBtn" class="nav-button" type="button">错字本</button>
+          <button id="switchProfileBtn" class="profile-switch" type="button">
+            <span>当前账号</span>
+            <strong id="profileBadge">未选择</strong>
+          </button>
+          <span id="roleBadge" class="status-pill">Student</span>
+          <span id="saveBadge" class="status-pill soft">已保存</span>
+        </div>
+      </header>
+
+      <main id="readingView" class="workspace">
+        <aside class="side-panel control-panel" aria-label="学习控制">
+          <section class="panel-section">
+            <div class="section-heading">
+              <p class="eyebrow">Level</p>
+              <h2>当前水平</h2>
+            </div>
+            <div id="levelCard" class="level-card"></div>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-heading">
+              <p class="eyebrow">Generate</p>
+              <h2>生成文章</h2>
+            </div>
+            <label for="themeInput">主题</label>
+            <select id="themeInput">
+              <option value="campus">校园生活</option>
+              <option value="singapore">新加坡生活</option>
+              <option value="nature">自然与环保</option>
+              <option value="science">小实验</option>
+              <option value="culture">节日文化</option>
+              <option value="mystery">小侦探故事</option>
+            </select>
+            <label for="lengthInput">篇幅</label>
+            <select id="lengthInput">
+              <option value="short">短篇</option>
+              <option value="medium" selected>标准</option>
+              <option value="long">挑战</option>
+            </select>
+            <button id="generateBtn" class="primary wide" type="button">生成下一篇</button>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-heading">
+              <p class="eyebrow">Session</p>
+              <h2>本篇数据</h2>
+            </div>
+            <div id="sessionStats" class="stat-grid"></div>
+            <button id="finishBtn" class="wide" type="button">完成阅读并分析</button>
+          </section>
+        </aside>
+
+        <section class="reader-panel" aria-labelledby="articleTitle">
+          <div class="reader-toolbar">
+            <div>
+              <p id="articleMeta" class="eyebrow">P4 高级华文</p>
+              <h2 id="articleTitle">载入文章中</h2>
+            </div>
+          </div>
+
+          <article id="articleText" class="article-text" aria-live="polite"></article>
+
+          <section class="comprehension-box" aria-labelledby="comprehensionTitle">
+            <div class="section-heading">
+              <p class="eyebrow">Reading Check</p>
+              <h2 id="comprehensionTitle">阅读理解</h2>
+            </div>
+            <div id="questionList" class="question-list"></div>
+          </section>
+        </section>
+
+        <aside class="side-panel study-panel" aria-label="生字与进度">
+          <section class="panel-section">
+            <div class="section-heading">
+              <p class="eyebrow">Selected</p>
+              <h2>刚标记的字词</h2>
+            </div>
+            <div id="selectedVocab" class="selected-vocab empty-state">点文章，解释会出现在这里。</div>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-heading with-action">
+              <div>
+                <p class="eyebrow">Mistakes</p>
+                <h2>错字本</h2>
+              </div>
+              <select id="reviewFilter" title="筛选复习状态">
+                <option value="all">全部</option>
+                <option value="new">不会</option>
+                <option value="learning">练习中</option>
+                <option value="mastered">已掌握</option>
+              </select>
+            </div>
+            <div id="vocabList" class="vocab-list"></div>
+            <button id="openMistakeBookBtn" class="wide" type="button">打开错字本</button>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-heading">
+              <p class="eyebrow">Progress</p>
+              <h2>水平变化</h2>
+            </div>
+            <div id="progressPanel" class="progress-panel"></div>
+          </section>
+        </aside>
+      </main>
+
+      <main id="mistakeBookView" class="mistake-book-view hidden" aria-labelledby="mistakeBookTitle">
+        <section class="mistake-book-hero">
+          <div>
+            <p class="eyebrow">Mistake Book</p>
+            <h2 id="mistakeBookTitle">错字本</h2>
+          </div>
+          <div class="mistake-actions">
+            <select id="mistakeBookFilter" title="筛选错字状态">
+              <option value="all">全部</option>
+              <option value="new">不会</option>
+              <option value="learning">练习中</option>
+              <option value="mastered">已掌握</option>
+            </select>
+            <button id="mistakeBookGenerateBtn" class="primary" type="button">用错字本生成文章</button>
+            <button id="backToReadingBtn" type="button">返回阅读</button>
+          </div>
+        </section>
+
+        <section id="mistakeBookStats" class="mistake-stats stat-grid" aria-label="错字统计"></section>
+        <section id="mistakeBookGrid" class="mistake-book-grid" aria-live="polite"></section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js?v=0.1.0" type="module"></script>
+  </body>
+</html>

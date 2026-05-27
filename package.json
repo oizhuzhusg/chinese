@@ -1,0 +1,16 @@
+{
+  "name": "chinese-reading-coach",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:node": "node scripts/dev-server.mjs",
+    "dev": "wrangler dev --port 8790",
+    "check": "node --check worker.js && node --check public/app.js",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env production"
+  },
+  "devDependencies": {
+    "wrangler": "^4.85.0"
+  }
+}

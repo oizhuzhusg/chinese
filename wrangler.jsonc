@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "chinese-reading-coach",
+  "main": "./worker.js",
+  "compatibility_date": "2026-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "APP_ENV": "local",
+    "OPENAI_MODEL": "gpt-4.1-nano",
+    "OPENAI_GENERATION_MODEL": "gpt-4.1-nano",
+    "OPENAI_EXPLAIN_MODEL": "gpt-4.1-nano"
+  },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
+    "not_found_handling": "single-page-application"
+  },
+  "env": {
+    "staging": {
+      "name": "chinese-reading-coach-staging",
+      "vars": {
+        "APP_ENV": "staging",
+        "OPENAI_MODEL": "gpt-4.1-nano",
+        "OPENAI_GENERATION_MODEL": "gpt-4.1-nano",
+        "OPENAI_EXPLAIN_MODEL": "gpt-4.1-nano"
+      }
+    },
+    "production": {
+      "name": "chinese-reading-coach",
+      "vars": {
+        "APP_ENV": "production",
+        "OPENAI_MODEL": "gpt-4.1-nano",
+        "OPENAI_GENERATION_MODEL": "gpt-4.1-nano",
+        "OPENAI_EXPLAIN_MODEL": "gpt-4.1-nano"
+      }
+    }
+  }
+}
