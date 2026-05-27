@@ -59,7 +59,7 @@ git checkout -b develop
 Add GitHub remote after creating the repository:
 
 ```bash
-git remote add origin git@github.com:<your-org-or-user>/chinese-reading-coach.git
+git remote add origin git@github.com:oizhuzhusg/chinese.git
 git push -u origin main
 git push -u origin develop
 ```
@@ -109,7 +109,7 @@ chinese-reading-coach-staging  listens to develop
 Production build settings:
 
 ```text
-Repository: <your GitHub repository>
+Repository: oizhuzhusg/chinese
 Branch: main
 Root directory: /
 Build command: npm run check
@@ -119,7 +119,7 @@ Deploy command: npm run deploy:production
 Staging build settings:
 
 ```text
-Repository: <your GitHub repository>
+Repository: oizhuzhusg/chinese
 Branch: develop
 Root directory: /
 Build command: npm run check
