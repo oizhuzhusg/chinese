@@ -1,4 +1,4 @@
-import { APP_VERSION } from "/version.js?v=2026.05.30.3";
+import { APP_VERSION } from "/version.js?v=2026.05.30.4";
 
 const PROFILE_LIST_KEY = "crcProfiles";
 const SELECTED_PROFILE_KEY = "crcSelectedProfile";
@@ -11,6 +11,8 @@ const MAX_AVOID_ARTICLES = 40;
 const MAX_GENERATION_ATTEMPTS = 3;
 const ARTICLE_DUPLICATE_THRESHOLD = 0.82;
 const DAILY_REVIEW_LIMIT = 12;
+const MAX_READING_RECORD_MS = 180_000;
+const MAX_AUTO_READING_MARKS = 18;
 
 const DEFAULT_PROFILES = [
   {
@@ -330,6 +332,12 @@ const els = {
   finishBtn: document.querySelector("#finishBtn"),
   articleMeta: document.querySelector("#articleMeta"),
   articleTitle: document.querySelector("#articleTitle"),
+  startReadAloudBtn: document.querySelector("#startReadAloudBtn"),
+  stopReadAloudBtn: document.querySelector("#stopReadAloudBtn"),
+  readAloudPanel: document.querySelector("#readAloudPanel"),
+  readAloudStatus: document.querySelector("#readAloudStatus"),
+  readAloudHint: document.querySelector("#readAloudHint"),
+  readAloudResult: document.querySelector("#readAloudResult"),
   articleText: document.querySelector("#articleText"),
   questionList: document.querySelector("#questionList"),
   selectedVocab: document.querySelector("#selectedVocab"),
@@ -353,6 +361,11 @@ const state = {
   data: null,
   selectedTerm: null,
   dailyReviewOpen: false,
+  mediaRecorder: null,
+  audioChunks: [],
+  audioStream: null,
+  recordTimer: null,
+  readAloudBusy: false,
   toastTimer: null
 };
 
@@ -388,6 +401,8 @@ function bindEvents() {
   els.backToReadingBtn.addEventListener("click", () => navigateTo("reading"));
   els.switchProfileBtn.addEventListener("click", showProfileGate);
   els.generateBtn.addEventListener("click", generateArticle);
+  els.startReadAloudBtn.addEventListener("click", startReadAloud);
+  els.stopReadAloudBtn.addEventListener("click", stopReadAloud);
   els.todayReviewBtn.addEventListener("click", toggleDailyReview);
   els.dailyReviewPanel.addEventListener("click", handleDailyReviewClick);
   els.mistakeBookGenerateBtn.addEventListener("click", generateArticleFromMistakeBook);
@@ -626,6 +641,7 @@ function renderAll() {
   renderTopbar();
   renderLevelCard();
   renderReader();
+  renderReadAloudControls();
   renderQuestions();
   renderStats();
   renderSelectedVocab();
@@ -697,6 +713,366 @@ function renderReader() {
     html += `</p>`;
   }
   els.articleText.innerHTML = html;
+}
+
+function renderReadAloudControls() {
+  const isRecording = Boolean(state.mediaRecorder && state.mediaRecorder.state === "recording");
+  els.startReadAloudBtn.disabled = state.readAloudBusy || isRecording;
+  els.stopReadAloudBtn.disabled = state.readAloudBusy || !isRecording;
+  els.startReadAloudBtn.classList.toggle("hidden", isRecording);
+  els.stopReadAloudBtn.classList.toggle("hidden", !isRecording);
+}
+
+async function startReadAloud() {
+  const article = currentArticle();
+  if (!article) return;
+  if (window.location.protocol === "file:") {
+    showToast("朗读检查需要用线上或本地服务打开。");
+    setReadAloudStatus("无法录音", "请打开线上版本或本地开发服务后再使用朗读检查。");
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder !== "function") {
+    showToast("这个浏览器暂不支持录音。");
+    setReadAloudStatus("无法录音", "当前浏览器没有可用的录音功能，可以换 Safari/Chrome 的新版浏览器再试。");
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true
+      }
+    });
+    const mimeType = preferredAudioMimeType();
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    state.audioChunks = [];
+    state.audioStream = stream;
+    state.mediaRecorder = recorder;
+    hideReadAloudResult();
+
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data?.size) {
+        state.audioChunks.push(event.data);
+      }
+    });
+    recorder.addEventListener("stop", () => {
+      void finishReadAloudRecording(recorder);
+    }, { once: true });
+
+    recorder.start(1000);
+    state.recordTimer = window.setTimeout(() => {
+      if (state.mediaRecorder?.state === "recording") {
+        stopReadAloud();
+      }
+    }, MAX_READING_RECORD_MS);
+    setReadAloudStatus("正在录音", "请让孩子按正常速度朗读当前文章。读完后点“停止录音”。");
+  } catch {
+    cleanupAudioStream();
+    state.mediaRecorder = null;
+    setReadAloudStatus("无法录音", "没有取得麦克风权限，或当前浏览器不允许录音。");
+    showToast("无法使用麦克风。");
+  } finally {
+    renderReadAloudControls();
+  }
+}
+
+function stopReadAloud() {
+  if (!state.mediaRecorder || state.mediaRecorder.state !== "recording") return;
+  state.mediaRecorder.stop();
+  clearReadAloudTimer();
+  setReadAloudStatus("正在分析", "录音已结束，正在转成文字并和原文对齐。");
+  renderReadAloudControls();
+}
+
+async function finishReadAloudRecording(recorder) {
+  clearReadAloudTimer();
+  cleanupAudioStream();
+  state.mediaRecorder = null;
+  const chunks = state.audioChunks;
+  const blob = new Blob(chunks, { type: recorder.mimeType || chunks[0]?.type || "audio/webm" });
+  state.audioChunks = [];
+
+  if (blob.size < 900) {
+    setReadAloudStatus("录音太短", "没有听到足够的朗读内容，请重新录一次。");
+    renderReadAloudControls();
+    return;
+  }
+
+  setReadAloudBusy(true);
+  try {
+    const payload = await transcribeReadingAudio(blob);
+    const transcript = String(payload.transcript || "").trim();
+    const result = applyReadAloudTranscript(transcript);
+    renderReadAloudResult(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "朗读检查失败。";
+    setReadAloudStatus("分析失败", message);
+    showToast("朗读检查失败，请稍后再试。");
+  } finally {
+    setReadAloudBusy(false);
+  }
+}
+
+async function transcribeReadingAudio(blob) {
+  const article = currentArticle();
+  const form = new FormData();
+  form.append("audio", blob, `reading-${Date.now().toString(36)}.${audioExtensionForMime(blob.type)}`);
+  form.append("articleId", article?.id || "");
+  form.append("levelId", article?.levelId || state.data.currentLevel);
+  return apiFormData("/api/speech/transcribe", form);
+}
+
+function applyReadAloudTranscript(transcript) {
+  const article = currentArticle();
+  if (!article) {
+    return { transcript, marked: [], issues: [], skipped: true, message: "没有当前文章。" };
+  }
+  const original = getChineseChars(article).join("");
+  const spoken = chineseOnly(transcript);
+
+  if (!spoken) {
+    const result = { transcript, marked: [], issues: [], skipped: true, message: "没有识别到中文朗读内容。" };
+    setReadAloudStatus("没有识别到中文", "可以靠近一点麦克风，重新读一遍。");
+    return result;
+  }
+
+  const minUsefulLength = Math.max(12, Math.floor(original.length * 0.45));
+  if (spoken.length < minUsefulLength) {
+    const result = { transcript, marked: [], issues: [], skipped: true, message: "录音内容太短，未自动标记。" };
+    setReadAloudStatus("录音太短", "系统没有自动标记，以免把没读完的部分误判成不会。");
+    return result;
+  }
+
+  const issues = readingDiffIssues(original, spoken);
+  const issueRate = original.length ? issues.length / original.length : 0;
+  if (issueRate > 0.38) {
+    const result = { transcript, marked: [], issues: issues.slice(0, MAX_AUTO_READING_MARKS), skipped: true, message: "朗读和原文差异太大，未自动标记。" };
+    setReadAloudStatus("需要重录", "这次差异较大，可能是录音太短或环境较吵。为了避免误判，先不自动加入错字本。");
+    return result;
+  }
+
+  const marked = markReadingIssues(article, issues);
+  article.readingChecks = Array.isArray(article.readingChecks) ? article.readingChecks : [];
+  article.readingChecks.unshift({
+    id: uid("reading-check"),
+    transcript: transcript.slice(0, 1200),
+    issueCount: issues.length,
+    markedTerms: marked.map((item) => item.term),
+    createdAt: new Date().toISOString()
+  });
+  article.readingChecks = article.readingChecks.slice(0, 8);
+  if (marked.length) {
+    state.selectedTerm = marked[0].term;
+  }
+  saveData();
+  renderAll();
+
+  const result = { transcript, marked, issues: issues.slice(0, MAX_AUTO_READING_MARKS), skipped: false };
+  setReadAloudStatus("朗读检查完成", marked.length ? `已自动加入 ${marked.length} 个不会的字词。` : "这次没有发现需要自动标记的新字词。");
+  showToast(marked.length ? `已自动标记 ${marked.length} 个字词。` : "朗读检查完成。");
+  return result;
+}
+
+function readingDiffIssues(original, spoken) {
+  const left = Array.from(original);
+  const right = Array.from(spoken);
+  const rows = left.length + 1;
+  const cols = right.length + 1;
+  const dist = Array.from({ length: rows }, () => new Uint16Array(cols));
+  const op = Array.from({ length: rows }, () => new Uint8Array(cols));
+
+  for (let i = 1; i < rows; i += 1) {
+    dist[i][0] = i;
+    op[i][0] = 1;
+  }
+  for (let j = 1; j < cols; j += 1) {
+    dist[0][j] = j;
+    op[0][j] = 2;
+  }
+
+  for (let i = 1; i < rows; i += 1) {
+    for (let j = 1; j < cols; j += 1) {
+      const substituteCost = left[i - 1] === right[j - 1] ? 0 : 1;
+      const substitute = dist[i - 1][j - 1] + substituteCost;
+      const deletion = dist[i - 1][j] + 1;
+      const insertion = dist[i][j - 1] + 1;
+      let best = substitute;
+      let bestOp = 0;
+      if (deletion < best) {
+        best = deletion;
+        bestOp = 1;
+      }
+      if (insertion < best) {
+        best = insertion;
+        bestOp = 2;
+      }
+      dist[i][j] = best;
+      op[i][j] = bestOp;
+    }
+  }
+
+  const issues = [];
+  let i = left.length;
+  let j = right.length;
+  while (i > 0 || j > 0) {
+    const current = op[i][j];
+    if (i > 0 && j > 0 && current === 0) {
+      if (left[i - 1] !== right[j - 1]) {
+        issues.push({
+          index: i - 1,
+          expected: left[i - 1],
+          heard: right[j - 1],
+          type: "substitution"
+        });
+      }
+      i -= 1;
+      j -= 1;
+    } else if (i > 0 && (current === 1 || j === 0)) {
+      issues.push({
+        index: i - 1,
+        expected: left[i - 1],
+        heard: "",
+        type: "missed"
+      });
+      i -= 1;
+    } else {
+      j -= 1;
+    }
+  }
+  return issues.reverse();
+}
+
+function markReadingIssues(article, issues) {
+  const marked = [];
+  const seen = new Set();
+  for (const issue of issues) {
+    if (marked.length >= MAX_AUTO_READING_MARKS) break;
+    const range = smartRangeForIndex(article, issue.index);
+    const key = `${range.start}-${range.end}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const added = addReadingAutoMark(article, range.start, range.end, issue);
+    if (added) marked.push(added);
+  }
+  return marked;
+}
+
+function addReadingAutoMark(article, start, end, issue) {
+  const term = getTermForRange(article, start, end);
+  if (!term) return null;
+  const context = contextForRange(article, start, end);
+  const now = new Date().toISOString();
+  const alreadyMarked = rangeHasMark(article, start, end);
+  if (!alreadyMarked) {
+    article.marks.push({
+      id: `read-${start}-${end}-${Date.now().toString(36)}`,
+      term,
+      start,
+      end,
+      context,
+      source: "read-aloud",
+      expected: issue.expected,
+      heard: issue.heard,
+      reason: issue.type,
+      createdAt: now
+    });
+  }
+  const item = upsertVocab(term, context, article.id);
+  item.status = "new";
+  item.readingMistakeCount = (Number(item.readingMistakeCount) || 0) + 1;
+  item.lastReadingMistakeAt = now;
+  item.updatedAt = now;
+  void enrichTermFromApi(term, context);
+  return {
+    term,
+    expected: issue.expected,
+    heard: issue.heard,
+    type: issue.type,
+    alreadyMarked
+  };
+}
+
+function rangeHasMark(article, start, end) {
+  return (article.marks ?? []).some((mark) => mark.start <= end && mark.end >= start);
+}
+
+function renderReadAloudResult(result) {
+  if (!result) {
+    hideReadAloudResult();
+    return;
+  }
+  const markedHtml = result.marked?.length
+    ? result.marked
+        .slice(0, MAX_AUTO_READING_MARKS)
+        .map(
+          (item) => `
+            <li>
+              <strong>${escapeHtml(item.term)}</strong>
+              <span>${escapeHtml(readingIssueLabel(item))}</span>
+            </li>
+          `
+        )
+        .join("")
+    : `<li><span>${escapeHtml(result.message || "没有自动标记新的字词。")}</span></li>`;
+  const transcriptText = result.transcript || "没有识别到文字。";
+  els.readAloudResult.classList.remove("hidden");
+  els.readAloudResult.innerHTML = `
+    <div class="read-aloud-summary">
+      <strong>${result.skipped ? "未自动标记" : "检查结果"}</strong>
+      <span>${escapeHtml(result.message || ((result.marked?.length || 0) ? `已加入 ${result.marked.length} 个字词。` : "没有新的错字词。"))}</span>
+    </div>
+    <ul class="read-aloud-issues">${markedHtml}</ul>
+    <details class="read-aloud-transcript">
+      <summary>查看识别文字</summary>
+      <p>${escapeHtml(transcriptText)}</p>
+    </details>
+  `;
+}
+
+function hideReadAloudResult() {
+  els.readAloudResult.classList.add("hidden");
+  els.readAloudResult.innerHTML = "";
+}
+
+function readingIssueLabel(item) {
+  if (item.type === "missed") return `漏读“${item.expected}”`;
+  return `原文“${item.expected}”，读成“${item.heard || "未识别"}”`;
+}
+
+function setReadAloudStatus(status, hint) {
+  els.readAloudStatus.textContent = status;
+  els.readAloudHint.textContent = hint;
+}
+
+function setReadAloudBusy(isBusy) {
+  state.readAloudBusy = isBusy;
+  renderReadAloudControls();
+}
+
+function clearReadAloudTimer() {
+  window.clearTimeout(state.recordTimer);
+  state.recordTimer = null;
+}
+
+function cleanupAudioStream() {
+  for (const track of state.audioStream?.getTracks?.() ?? []) {
+    track.stop();
+  }
+  state.audioStream = null;
+}
+
+function preferredAudioMimeType() {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/mpeg", "audio/wav"];
+  return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
+}
+
+function audioExtensionForMime(type) {
+  if (type.includes("mp4")) return "mp4";
+  if (type.includes("mpeg")) return "mp3";
+  if (type.includes("wav")) return "wav";
+  if (type.includes("ogg")) return "ogg";
+  return "webm";
 }
 
 function renderQuestions() {
@@ -1652,6 +2028,31 @@ async function api(path, body) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body ?? {}),
+      signal: controller.signal
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || `Request failed: ${response.status}`);
+    }
+    return payload;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+async function apiFormData(path, formData) {
+  if (window.location.protocol === "file:") {
+    throw new Error("这个功能需要通过线上或本地服务使用。");
+  }
+  if (typeof window.fetch !== "function") {
+    throw new Error("当前浏览器不支持录音上传。");
+  }
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 60_000);
+  try {
+    const response = await fetch(path, {
+      method: "POST",
+      body: formData,
       signal: controller.signal
     });
     const payload = await response.json().catch(() => ({}));

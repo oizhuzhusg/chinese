@@ -12,6 +12,7 @@ const env = {
   OPENAI_MODEL: "gpt-4.1-nano",
   OPENAI_GENERATION_MODEL: "gpt-4.1-nano",
   OPENAI_EXPLAIN_MODEL: "gpt-4.1-nano",
+  OPENAI_TRANSCRIBE_MODEL: "gpt-4o-mini-transcribe",
   ...loadDevVars(join(root, ".dev.vars"))
 };
 

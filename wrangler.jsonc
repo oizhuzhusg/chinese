@@ -12,7 +12,8 @@
     "APP_ENV": "local",
     "OPENAI_MODEL": "gpt-4.1-nano",
     "OPENAI_GENERATION_MODEL": "gpt-4.1-nano",
-    "OPENAI_EXPLAIN_MODEL": "gpt-4.1-nano"
+    "OPENAI_EXPLAIN_MODEL": "gpt-4.1-nano",
+    "OPENAI_TRANSCRIBE_MODEL": "gpt-4o-mini-transcribe"
   },
   "assets": {
     "directory": "./public",
@@ -27,7 +28,8 @@
         "APP_ENV": "staging",
         "OPENAI_MODEL": "gpt-4.1-nano",
         "OPENAI_GENERATION_MODEL": "gpt-4.1-nano",
-        "OPENAI_EXPLAIN_MODEL": "gpt-4.1-nano"
+        "OPENAI_EXPLAIN_MODEL": "gpt-4.1-nano",
+        "OPENAI_TRANSCRIBE_MODEL": "gpt-4o-mini-transcribe"
       }
     },
     "production": {
@@ -36,7 +38,8 @@
         "APP_ENV": "production",
         "OPENAI_MODEL": "gpt-4.1-nano",
         "OPENAI_GENERATION_MODEL": "gpt-4.1-nano",
-        "OPENAI_EXPLAIN_MODEL": "gpt-4.1-nano"
+        "OPENAI_EXPLAIN_MODEL": "gpt-4.1-nano",
+        "OPENAI_TRANSCRIBE_MODEL": "gpt-4o-mini-transcribe"
       }
     }
   }

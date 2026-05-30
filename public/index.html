@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>中文阅读教练</title>
-    <link rel="stylesheet" href="/styles.css?v=2026.05.30.3" />
+    <link rel="stylesheet" href="/styles.css?v=2026.05.30.4" />
   </head>
   <body>
     <div id="updateBanner" class="update-banner hidden" role="status" aria-live="polite">
@@ -104,7 +104,19 @@
               <p id="articleMeta" class="eyebrow">P4 高级华文</p>
               <h2 id="articleTitle">载入文章中</h2>
             </div>
+            <div class="read-aloud-actions">
+              <button id="startReadAloudBtn" class="primary" type="button">开始朗读</button>
+              <button id="stopReadAloudBtn" class="danger hidden" type="button">停止录音</button>
+            </div>
           </div>
+
+          <section id="readAloudPanel" class="read-aloud-panel" aria-live="polite">
+            <div class="read-aloud-status">
+              <strong id="readAloudStatus">朗读检查</strong>
+              <span id="readAloudHint">孩子读完一篇文章后，可以录音检查。系统会把读错或漏读的字自动加入错字本。</span>
+            </div>
+            <div id="readAloudResult" class="read-aloud-result hidden"></div>
+          </section>
 
           <article id="articleText" class="article-text" aria-live="polite"></article>
 
@@ -179,6 +191,6 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=2026.05.30.3" type="module"></script>
+    <script src="/app.js?v=2026.05.30.4" type="module"></script>
   </body>
 </html>

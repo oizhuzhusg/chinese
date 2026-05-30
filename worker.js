@@ -1,6 +1,8 @@
 import { APP_VERSION } from "./public/version.js";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+const OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions";
+const MAX_TRANSCRIPTION_BYTES = 24 * 1024 * 1024;
 
 const LEVELS = [
   { id: "P4_CL_SUPPORT", label: "小四华文巩固" },
@@ -134,6 +136,10 @@ export default {
 
     if (url.pathname === "/api/vocab/explain" && request.method === "POST") {
       return handleVocabExplain(request, env);
+    }
+
+    if (url.pathname === "/api/speech/transcribe" && request.method === "POST") {
+      return handleSpeechTranscribe(request, env);
     }
 
     if (url.pathname === "/api/level/analyze" && request.method === "POST") {
@@ -300,6 +306,46 @@ async function vocabExplainFromBody(body, env) {
 async function handleLevelAnalyze(request) {
   const body = await readJson(request);
   return json(levelAnalyzeFromBody(body));
+}
+
+async function handleSpeechTranscribe(request, env) {
+  if (!hasOpenAIKey(env)) {
+    return json({ error: "OpenAI API key is not configured." }, 503);
+  }
+
+  const form = await request.formData().catch(() => null);
+  const audio = form?.get("audio");
+  if (!audio || typeof audio.arrayBuffer !== "function") {
+    return json({ error: "Missing audio file." }, 400);
+  }
+  if (typeof audio.size === "number" && audio.size > MAX_TRANSCRIPTION_BYTES) {
+    return json({ error: "Audio file is too large." }, 413);
+  }
+
+  const upload = new FormData();
+  const filename = audio.name || `reading.${extensionForAudioType(audio.type || "")}`;
+  upload.append("file", audio, filename);
+  upload.append("model", env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe");
+  upload.append("response_format", "json");
+  upload.append("prompt", "这是一名10岁学生朗读简体中文阅读文章的录音。请尽量转写为简体中文，保留朗读到的文字，不要补全没有读出的内容。");
+
+  const response = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`
+    },
+    body: upload
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return json({ error: payload?.error?.message || `Transcription failed with ${response.status}` }, response.status);
+  }
+
+  return json({
+    transcript: cleanText(payload.text, 6000),
+    source: "openai",
+    model: env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe"
+  });
 }
 
 function levelAnalyzeFromBody(body) {
@@ -602,4 +648,12 @@ function cleanText(value, maxLength) {
     .replace(/\n{3,}/g, "\n\n")
     .trim()
     .slice(0, maxLength);
+}
+
+function extensionForAudioType(type) {
+  if (type.includes("mp4")) return "mp4";
+  if (type.includes("mpeg")) return "mp3";
+  if (type.includes("wav")) return "wav";
+  if (type.includes("ogg")) return "ogg";
+  return "webm";
 }
