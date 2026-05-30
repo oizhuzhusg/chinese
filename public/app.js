@@ -1,4 +1,4 @@
-import { APP_VERSION } from "/version.js?v=2026.05.30.1";
+import { APP_VERSION } from "/version.js?v=2026.05.30.2";
 
 const PROFILE_LIST_KEY = "crcProfiles";
 const SELECTED_PROFILE_KEY = "crcSelectedProfile";
@@ -10,6 +10,7 @@ const MAX_ARTICLE_HISTORY = 120;
 const MAX_AVOID_ARTICLES = 40;
 const MAX_GENERATION_ATTEMPTS = 3;
 const ARTICLE_DUPLICATE_THRESHOLD = 0.82;
+const DAILY_REVIEW_LIMIT = 12;
 
 const DEFAULT_PROFILES = [
   {
@@ -336,9 +337,11 @@ const els = {
   vocabList: document.querySelector("#vocabList"),
   openMistakeBookBtn: document.querySelector("#openMistakeBookBtn"),
   mistakeBookFilter: document.querySelector("#mistakeBookFilter"),
+  todayReviewBtn: document.querySelector("#todayReviewBtn"),
   mistakeBookGenerateBtn: document.querySelector("#mistakeBookGenerateBtn"),
   backToReadingBtn: document.querySelector("#backToReadingBtn"),
   mistakeBookStats: document.querySelector("#mistakeBookStats"),
+  dailyReviewPanel: document.querySelector("#dailyReviewPanel"),
   mistakeBookGrid: document.querySelector("#mistakeBookGrid"),
   progressPanel: document.querySelector("#progressPanel"),
   toast: document.querySelector("#toast")
@@ -349,6 +352,7 @@ const state = {
   profile: null,
   data: null,
   selectedTerm: null,
+  dailyReviewOpen: false,
   toastTimer: null
 };
 
@@ -384,6 +388,8 @@ function bindEvents() {
   els.backToReadingBtn.addEventListener("click", () => navigateTo("reading"));
   els.switchProfileBtn.addEventListener("click", showProfileGate);
   els.generateBtn.addEventListener("click", generateArticle);
+  els.todayReviewBtn.addEventListener("click", toggleDailyReview);
+  els.dailyReviewPanel.addEventListener("click", handleDailyReviewClick);
   els.mistakeBookGenerateBtn.addEventListener("click", generateArticleFromMistakeBook);
   els.finishBtn.addEventListener("click", finishReading);
   els.articleText.addEventListener("click", handleArticleClick);
@@ -505,6 +511,11 @@ function loadLearnerData(profile, options = {}) {
 function migrateLearnerData(data) {
   data.articles = Array.isArray(data.articles) ? data.articles : [];
   data.articleHistory = Array.isArray(data.articleHistory) ? data.articleHistory : [];
+  data.vocabulary = data.vocabulary && typeof data.vocabulary === "object" ? data.vocabulary : {};
+  for (const item of Object.values(data.vocabulary)) {
+    item.dailyHits = normalizeDailyHits(item.dailyHits);
+    item.lastMarkedAt = item.lastMarkedAt || item.updatedAt || item.firstSeenAt || "";
+  }
   const known = new Set(data.articleHistory.map((entry) => entry.fingerprint || normalizeDuplicateText(entry.title || "")));
   for (const article of data.articles) {
     const entry = articleHistoryEntry(article);
@@ -769,18 +780,22 @@ function renderMistakeBook() {
   const filter = els.mistakeBookFilter.value || "all";
   const items = sortedVocabItems().filter((item) => filter === "all" || item.status === filter);
   const allItems = Object.values(state.data.vocabulary ?? {});
+  const todayItems = todayReviewItems();
   const newItems = allItems.filter((item) => item.status === "new").length;
   const learning = allItems.filter((item) => item.status === "learning").length;
   const mastered = allItems.filter((item) => item.status === "mastered").length;
 
   els.mistakeBookStats.innerHTML = `
     <div class="stat"><span>全部</span><strong>${allItems.length}</strong></div>
+    <div class="stat"><span>今日</span><strong>${todayItems.length}</strong></div>
     <div class="stat"><span>不会</span><strong>${newItems}</strong></div>
     <div class="stat"><span>练习中</span><strong>${learning}</strong></div>
     <div class="stat"><span>已掌握</span><strong>${mastered}</strong></div>
   `;
 
+  els.todayReviewBtn.textContent = state.dailyReviewOpen ? "收起今日复习" : `今日复习${todayItems.length ? ` (${todayItems.length})` : ""}`;
   els.mistakeBookGenerateBtn.disabled = !allItems.some((item) => item.status !== "mastered");
+  renderDailyReview(todayItems);
 
   if (!items.length) {
     const message = allItems.length ? "这个筛选下暂无字词。" : "还没有错字词。读文章时点一下不认识的字，系统会自动判断字或词并加入这里。";
@@ -789,6 +804,77 @@ function renderMistakeBook() {
   }
 
   els.mistakeBookGrid.innerHTML = items.map((item) => `<section class="vocab-card">${vocabCardContent(item)}</section>`).join("");
+}
+
+function renderDailyReview(items) {
+  els.dailyReviewPanel.classList.toggle("hidden", !state.dailyReviewOpen);
+  if (!state.dailyReviewOpen) {
+    els.dailyReviewPanel.innerHTML = "";
+    return;
+  }
+
+  if (!items.length) {
+    els.dailyReviewPanel.innerHTML = `
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Today Review</p>
+          <h2>今日复习</h2>
+        </div>
+      </div>
+      <div class="empty-state">今天还没有标记新的字词。读一篇文章，点出不认识的字词后，它们会自动出现在这里。</div>
+    `;
+    return;
+  }
+
+  const reviewItems = items.slice(0, DAILY_REVIEW_LIMIT);
+  const extraCount = Math.max(0, items.length - reviewItems.length);
+  els.dailyReviewPanel.innerHTML = `
+    <div class="section-heading daily-review-heading">
+      <div>
+        <p class="eyebrow">Today Review · ${escapeHtml(todayKey())}</p>
+        <h2>今日复习</h2>
+      </div>
+      <button class="primary" type="button" data-daily-review-generate>用今日错字生成文章</button>
+    </div>
+    <p class="daily-review-copy">只复习今天点出来的字词；同一天重复点过的会排在前面。先认字，再看解释，最后放回新文章里读。</p>
+    <div class="daily-review-flow" aria-label="今日复习步骤">
+      <span>1 看字形</span>
+      <span>2 读拼音</span>
+      <span>3 讲意思</span>
+      <span>4 回文章</span>
+    </div>
+    <div class="daily-review-grid">
+      ${reviewItems.map(dailyReviewCard).join("")}
+    </div>
+    ${extraCount ? `<p class="daily-review-note">还有 ${extraCount} 个今天标记的字词留在错字本中，可分批练习。</p>` : ""}
+  `;
+}
+
+function dailyReviewCard(item) {
+  const hits = item.todayHits > 1 ? `今天 ${item.todayHits} 次` : "今天标记";
+  return `
+    <section class="daily-review-card">
+      <div class="review-card-meta">
+        <span>${escapeHtml(hits)}</span>
+        <span>${escapeHtml(statusLabel(item.status))}</span>
+      </div>
+      <div>
+        <div class="vocab-term">${escapeHtml(item.term)}</div>
+        <div class="vocab-pinyin">${escapeHtml(item.pinyin || "AI 待补充")}</div>
+      </div>
+      <p class="review-prompt">试着先说出这个字词在原文里的意思。</p>
+      <details>
+        <summary>看解释</summary>
+        <p class="vocab-text">${escapeHtml(item.explanationZh)}</p>
+        <p class="vocab-text en">${escapeHtml(item.explanationEn)}</p>
+        <p class="vocab-example">${escapeHtml(item.exampleSentence)}</p>
+      </details>
+      <div class="review-actions" role="group" aria-label="今日掌握情况">
+        <button class="review-status-btn" type="button" data-term="${escapeHtml(item.term)}" data-status="learning">再练</button>
+        <button class="review-status-btn primary" type="button" data-term="${escapeHtml(item.term)}" data-status="mastered">认识了</button>
+      </div>
+    </section>
+  `;
 }
 
 function vocabCardContent(item, options = {}) {
@@ -895,11 +981,18 @@ function addMark(article, start, end) {
 
 function upsertVocab(term, context, articleId) {
   const now = new Date().toISOString();
+  const dateKey = todayKey();
   const existing = state.data.vocabulary[term];
   if (existing) {
     existing.hitCount += 1;
     existing.context = context || existing.context;
     existing.articleIds = Array.from(new Set([...(existing.articleIds ?? []), articleId]));
+    existing.dailyHits = normalizeDailyHits(existing.dailyHits);
+    existing.dailyHits[dateKey] = (existing.dailyHits[dateKey] ?? 0) + 1;
+    existing.lastMarkedAt = now;
+    if (existing.status === "mastered") {
+      existing.status = "learning";
+    }
     existing.updatedAt = now;
     return existing;
   }
@@ -914,7 +1007,9 @@ function upsertVocab(term, context, articleId) {
     articleIds: [articleId],
     status: "new",
     hitCount: 1,
+    dailyHits: { [dateKey]: 1 },
     firstSeenAt: now,
+    lastMarkedAt: now,
     updatedAt: now,
     source: explanation.source
   };
@@ -960,7 +1055,7 @@ function handleQuestionAnswer(event) {
 }
 
 function handleStatusClick(event) {
-  const button = event.target.closest(".status-btn");
+  const button = event.target.closest(".status-btn, .review-status-btn");
   if (!button || !state.data) return;
   const term = button.dataset.term;
   const status = button.dataset.status;
@@ -976,6 +1071,22 @@ function handleStatusClick(event) {
   renderProgress();
 }
 
+function toggleDailyReview() {
+  state.dailyReviewOpen = !state.dailyReviewOpen;
+  renderMistakeBook();
+  if (state.dailyReviewOpen) {
+    window.requestAnimationFrame(() => {
+      els.dailyReviewPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+}
+
+function handleDailyReviewClick(event) {
+  const button = event.target.closest("[data-daily-review-generate]");
+  if (!button) return;
+  generateArticleFromTodayReview();
+}
+
 function generateArticleFromMistakeBook() {
   const terms = targetReviewTerms(18);
   if (!terms.length) {
@@ -984,6 +1095,16 @@ function generateArticleFromMistakeBook() {
   }
   navigateTo("reading");
   return generateArticle({ focusTerms: terms, source: "mistakeBook" });
+}
+
+function generateArticleFromTodayReview() {
+  const terms = targetTodayReviewTerms(18);
+  if (!terms.length) {
+    showToast("今天还没有标记新的字词。");
+    return;
+  }
+  navigateTo("reading");
+  return generateArticle({ focusTerms: terms, source: "todayReview" });
 }
 
 async function generateArticle(options = {}) {
@@ -1054,6 +1175,49 @@ function targetReviewTerms(limit = 18) {
       hitCount: item.hitCount,
       context: item.context || ""
     }));
+}
+
+function targetTodayReviewTerms(limit = 18) {
+  return todayReviewItems()
+    .slice(0, limit)
+    .map((item) => ({
+      term: item.term,
+      status: item.status,
+      hitCount: item.hitCount,
+      todayHits: item.todayHits,
+      context: item.context || ""
+    }));
+}
+
+function todayReviewItems(dateKey = todayKey()) {
+  if (!state.data?.vocabulary) return [];
+  const markCounts = articleMarkCountsForDate(dateKey);
+  const statusWeight = { new: 0, learning: 1, mastered: 2 };
+  return Object.values(state.data.vocabulary)
+    .map((item) => {
+      const storedHits = Number(item.dailyHits?.[dateKey]) || 0;
+      const markHits = Number(markCounts.get(item.term)) || 0;
+      return { ...item, todayHits: Math.max(storedHits, markHits) };
+    })
+    .filter((item) => item.todayHits > 0)
+    .sort(
+      (a, b) =>
+        b.todayHits - a.todayHits ||
+        statusWeight[a.status] - statusWeight[b.status] ||
+        b.hitCount - a.hitCount ||
+        b.updatedAt.localeCompare(a.updatedAt)
+    );
+}
+
+function articleMarkCountsForDate(dateKey) {
+  const counts = new Map();
+  for (const article of state.data?.articles ?? []) {
+    for (const mark of article.marks ?? []) {
+      if (dateKeyFromIso(mark.createdAt || article.createdAt) !== dateKey) continue;
+      counts.set(mark.term, (counts.get(mark.term) ?? 0) + 1);
+    }
+  }
+  return counts;
 }
 
 function recentArticleBriefs(limit = MAX_AVOID_ARTICLES) {
@@ -1678,6 +1842,36 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function todayKey() {
+  return dateKeyFromDate(new Date());
+}
+
+function dateKeyFromIso(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return dateKeyFromDate(date);
+}
+
+function dateKeyFromDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeDailyHits(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const normalized = {};
+  for (const [key, count] of Object.entries(value)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) continue;
+    const numeric = Number(count);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      normalized[key] = Math.floor(numeric);
+    }
+  }
+  return normalized;
+}
+
 function formatPercent(value) {
   return `${Math.round((Number(value) || 0) * 100)}%`;
 }
@@ -1686,6 +1880,12 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleDateString("zh-SG", { month: "short", day: "numeric" });
+}
+
+function statusLabel(status) {
+  if (status === "mastered") return "已掌握";
+  if (status === "learning") return "练习中";
+  return "不会";
 }
 
 function showToast(message) {

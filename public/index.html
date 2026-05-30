@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>中文阅读教练</title>
-    <link rel="stylesheet" href="/styles.css?v=2026.05.30.1" />
+    <link rel="stylesheet" href="/styles.css?v=2026.05.30.2" />
   </head>
   <body>
     <div id="updateBanner" class="update-banner hidden" role="status" aria-live="polite">
@@ -166,17 +166,19 @@
               <option value="learning">练习中</option>
               <option value="mastered">已掌握</option>
             </select>
+            <button id="todayReviewBtn" type="button">今日复习</button>
             <button id="mistakeBookGenerateBtn" class="primary" type="button">用错字本生成文章</button>
             <button id="backToReadingBtn" type="button">返回阅读</button>
           </div>
         </section>
 
         <section id="mistakeBookStats" class="mistake-stats stat-grid" aria-label="错字统计"></section>
+        <section id="dailyReviewPanel" class="daily-review-panel hidden" aria-live="polite"></section>
         <section id="mistakeBookGrid" class="mistake-book-grid" aria-live="polite"></section>
       </main>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=2026.05.30.1" type="module"></script>
+    <script src="/app.js?v=2026.05.30.2" type="module"></script>
   </body>
 </html>
