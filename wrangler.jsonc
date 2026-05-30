@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "chinese-reading-coach",
+  "name": "chinese-reading-coach-staging",
   "main": "./worker.js",
   "compatibility_date": "2026-05-01",
   "compatibility_flags": ["nodejs_compat"],
